@@ -1,0 +1,293 @@
+name: ${PROJECT_NAME}
+services:
+  backend:
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+        required: true
+    image: ghcr.io/frappe/crm:stable
+    networks:
+      default: null
+    platform: linux/amd64
+    pull_policy: missing
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: sites
+        target: /home/frappe/frappe-bench/sites
+        volume: {}
+  configurator:
+    command:
+      - |
+        ls -1 apps > sites/apps.txt; 
+        bench set-config -g db_host $$DB_HOST; 
+        bench set-config -gp db_port $$DB_PORT; 
+        bench set-config -g redis_cache "redis://$$REDIS_CACHE"; 
+        bench set-config -g redis_queue "redis://$$REDIS_QUEUE"; 
+        bench set-config -g redis_socketio "redis://$$REDIS_QUEUE"; 
+        bench set-config -gp socketio_port $$SOCKETIO_PORT;
+        bench new-site $$DOMAIN_NAME \
+          --force \
+          --mariadb-root-password $$MYSQL_ROOT_PASSWORD \
+          --admin-password admin \
+          --no-mariadb-socket;
+        bench --site $$DOMAIN_NAME install-app crm
+        bench --site $$DOMAIN_NAME set-config developer_mode 1
+        bench --site $$DOMAIN_NAME clear-cache
+
+    depends_on:
+      db:
+        condition: service_healthy
+        required: true
+      redis-cache:
+        condition: service_started
+        required: true
+      redis-queue:
+        condition: service_started
+        required: true
+    entrypoint:
+      - bash
+      - -c
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      REDIS_CACHE: redis-cache:6379
+      REDIS_QUEUE: redis-queue:6379
+      SOCKETIO_PORT: "9000"
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      DOMAIN_NAME: ${DOMAIN_NAME}
+    image: ghcr.io/frappe/crm:stable
+    networks:
+      default: null
+    platform: linux/amd64
+    pull_policy: missing
+    restart: on-failure
+    volumes:
+      - type: volume
+        source: sites
+        target: /home/frappe/frappe-bench/sites
+        volume: {}
+  cron:
+    command:
+      - daemon
+      - --docker
+    depends_on:
+      scheduler:
+        condition: service_started
+        required: true
+    image: mcuadros/ofelia:latest
+    networks:
+      default: null
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        read_only: true
+        bind:
+          create_host_path: true
+  db:
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --skip-innodb-read-only-compressed
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost --password=${MYSQL_ROOT_PASSWORD}"]
+      interval: 1s
+      retries: 20
+    image: mariadb:10.6
+    networks:
+      default: null
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: db-data
+        target: /var/lib/mysql
+        volume: {}
+  frontend:
+    command:
+      - nginx-entrypoint.sh
+    depends_on:
+      backend:
+        condition: service_started
+        required: true
+      websocket:
+        condition: service_started
+        required: true
+    environment:
+      BACKEND: backend:8000
+      CLIENT_MAX_BODY_SIZE: 50m
+      FRAPPE_SITE_NAME_HEADER: $$host
+      PROXY_READ_TIMEOUT: "120"
+      SOCKETIO: websocket:9000
+      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: "off"
+    image: ghcr.io/frappe/crm:stable
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: traefik-public
+      traefik.http.routers.frontend-http.entrypoints: websecure
+      traefik.http.routers.frontend-http.tls: "true"
+      traefik.http.routers.frontend-http.rule: Host(`${DOMAIN_NAME}`)
+      traefik.http.routers.frontend-http.tls.certresolver: letsencrypt
+      traefik.http.services.frontend.loadbalancer.server.port: "8080"
+    networks:
+      - default
+      - traefik-public
+    platform: linux/amd64
+    pull_policy: missing
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: sites
+        target: /home/frappe/frappe-bench/sites
+        volume: {}
+  queue-long:
+    command:
+      - bench
+      - worker
+      - --queue
+      - long,default,short
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+        required: true
+    image: ghcr.io/frappe/crm:stable
+    networks:
+      default: null
+    platform: linux/amd64
+    pull_policy: missing
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: sites
+        target: /home/frappe/frappe-bench/sites
+        volume: {}
+  queue-short:
+    command:
+      - bench
+      - worker
+      - --queue
+      - short,default
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+        required: true
+    image: ghcr.io/frappe/crm:stable
+    networks:
+      default: null
+    platform: linux/amd64
+    pull_policy: missing
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: sites
+        target: /home/frappe/frappe-bench/sites
+        volume: {}
+  redis-cache:
+    image: redis:6.2-alpine
+    networks:
+      default: null
+    restart: unless-stopped
+  redis-queue:
+    image: redis:6.2-alpine
+    networks:
+      default: null
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: redis-queue-data
+        target: /data
+        volume: {}
+  scheduler:
+    command:
+      - bench
+      - schedule
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+        required: true
+    image: ghcr.io/frappe/crm:stable
+    labels:
+      ofelia.enabled: "true"
+      ofelia.job-exec.datecron.command: bench --site all backup
+      ofelia.job-exec.datecron.schedule: '@every 6h'
+      ofelia.job-exec.datecron.user: frappe
+    networks:
+      default: null
+    platform: linux/amd64
+    pull_policy: missing
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: sites
+        target: /home/frappe/frappe-bench/sites
+        volume: {}
+  websocket:
+    command:
+      - node
+      - /home/frappe/frappe-bench/apps/frappe/socketio.js
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+        required: true
+    image: ghcr.io/frappe/crm:stable
+    networks:
+      - default
+      - traefik-public
+    platform: linux/amd64
+    pull_policy: missing
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: sites
+        target: /home/frappe/frappe-bench/sites
+        volume: {}
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: traefik-public
+      traefik.http.routers.websocket.rule: Host(`${DOMAIN_NAME}`) && PathPrefix(`/socket.io`)
+      traefik.http.routers.websocket.entrypoints: ws,wss,websecure
+      traefik.http.routers.websocket.tls: "true"
+      traefik.http.routers.websocket.tls.certresolver: letsencrypt
+      traefik.http.services.websocket.loadbalancer.server.port: "9000"
+      traefik.http.routers.websocket.middlewares: frappe-socketio
+      traefik.http.middlewares.frappe-socketio.stripPrefix.prefixes: /socket.io
+      traefik.http.middlewares.frappe-socketio.stripPrefix.forceSlash: false
+      traefik.http.serversTransports.insecureTransport.insecureSkipVerify: "true"
+      traefik.http.services.frappe-socketio.loadBalancer.serversTransport: insecureTransport
+networks:
+  default:
+    name: ${PROJECT_NAME}_default
+  traefik-public:
+    external: true
+    name: traefik-public
+volumes:
+  cert-data:
+    name: ${PROJECT_NAME}_cert-data
+  db-data:
+    name: ${PROJECT_NAME}_db-data
+  redis-queue-data:
+    name: ${PROJECT_NAME}_redis-queue-data
+  sites:
+    name: ${PROJECT_NAME}_sites
+x-backend-defaults:
+  depends_on:
+    configurator:
+      condition: service_completed_successfully
+  image: ghcr.io/frappe/crm:stable
+  pull_policy: missing
+  restart: unless-stopped
+  volumes:
+    - sites:/home/frappe/frappe-bench/sites
+x-customizable-image:
+  image: ghcr.io/frappe/crm:stable
+  pull_policy: missing
+  restart: unless-stopped
+x-depends-on-configurator:
+  depends_on:
+    configurator:
+      condition: service_completed_successfully
