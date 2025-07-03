@@ -1,4 +1,4 @@
-name: ${PROJECT_NAME}
+name: crm
 services:
   backend:
     depends_on:
@@ -31,9 +31,9 @@ services:
           --mariadb-root-password $$MYSQL_ROOT_PASSWORD \
           --admin-password admin \
           --no-mariadb-socket;
-        bench --site $$DOMAIN_NAME install-app crm
-        bench --site $$DOMAIN_NAME set-config developer_mode 1
-        bench --site $$DOMAIN_NAME clear-cache
+        bench --site $$DOMAIN_NAME install-app crm;
+        bench --site $$DOMAIN_NAME set-config developer_mode 1;
+        bench --site $$DOMAIN_NAME clear-cache;
 
     depends_on:
       db:
@@ -294,16 +294,16 @@ services:
       traefik.http.services.frappe-socketio.loadBalancer.serversTransport: insecureTransport
 networks:
   default:
-    name: ${PROJECT_NAME}_default
+    name: crm_default
 volumes:
   cert-data:
-    name: ${PROJECT_NAME}_cert-data
+    name: crm_cert-data
   db-data:
-    name: ${PROJECT_NAME}_db-data
+    name: crm_db-data
   redis-queue-data:
-    name: ${PROJECT_NAME}_redis-queue-data
+    name: crm_redis-queue-data
   sites:
-    name: ${PROJECT_NAME}_sites
+    name: crm_sites
 x-backend-defaults:
   depends_on:
     configurator:

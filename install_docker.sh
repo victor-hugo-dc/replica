@@ -23,7 +23,7 @@ sudo apt-get update
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
 # 6. (Optional) Add your user to the docker group (so you don't need sudo)
-sudo groupadd docker || true
+# sudo groupadd docker || true
 sudo usermod -aG docker $USER
 
 # 7. Print Docker version to verify installation
